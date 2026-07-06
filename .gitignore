@@ -1,0 +1,12 @@
+AGENTS.md
+PE0-FILES_WEB-202602.zip
+PERFILES_WEB-202602.zip
+PROP-DATA-FILE_202602.xlsx
+
+# large raw inputs and regenerable processed outputs (rebuild with the build_*.py scripts)
+data/UIUC/inputs/UIUC-propDB.zip
+data/APC/inputs/
+data/UIUC/inputs/volume-*/
+data/APC/outputs/
+data/UIUC/outputs/
+__pycache__/

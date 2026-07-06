@@ -1,0 +1,1361 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Propeller Candidate Picker</title>
+<!-- local Plotly (extracted from obs/demo.html) so this opens offline from file:// -->
+<script src="plotly.min.js"></script>
+<!-- compact data bundle for all 611 props, built by build_picker.py -->
+<script src="picker_data.js"></script>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 12px; color: #111; background: #fff; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .note { color: #555; font-size: 13px; margin: 0 0 12px; max-width: 900px; }
+
+  /* ---- toolbar ---- */
+  .toolbar { position: sticky; top: 0; z-index: 5; background: #fafafa;
+    border: 1px solid #ddd; border-radius: 6px; padding: 10px 12px; margin-bottom: 12px;
+    display: flex; flex-wrap: wrap; gap: 18px 22px; align-items: center; }
+  .toolbar .grp { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+  .toolbar label { font-size: 13px; }
+  .toolbar input[type=range] { width: 150px; vertical-align: middle; }
+  .val { font-variant-numeric: tabular-nums; color: #333; min-width: 42px; display: inline-block; }
+  .tin { width: 66px; font-size: 12px; padding: 2px 4px; border: 1px solid #1e78ff;
+    border-radius: 4px; accent-color: #1e78ff; }
+  button { font-size: 13px; padding: 6px 12px; cursor: pointer;
+    border: 1px solid #888; border-radius: 4px; background: #f0f0f0; }
+  button:hover { background: #e6e6e6; }
+  .tog { border: 1px solid #bbb; }
+  .tog.on { background: #d6ebff; border-color: #4C78A8; }
+  #ptSwitch { padding: 6px 8px; font-size: 15px; line-height: 1; }
+  #buildBtn { background: #4C78A8; color: #fff; border-color: #37587d; font-weight: 600; }
+  #deployBtn { background: #54A24B; color: #fff; border-color: #3d7a36; font-weight: 600; }
+  .count { font-size: 13px; color: #333; }
+
+  /* ---- layout: table on the left 3/4, plots in the right 1/4 ---- */
+  .content { display: flex; align-items: flex-start; gap: 12px; }
+  .tablewrap { flex: 0 0 62%; max-width: 62%; }
+  /* the plot column is positioned relative so each plot can be pinned (absolute)
+     to the vertical offset of its own table row */
+  .plotcol { flex: 1 1 38%; position: relative; }
+
+  /* one built plot, pinned to its row's top; height set in JS to the row height */
+  .rowplot { position: absolute; left: 0; right: 0; border: 1px solid #ccc;
+    border-radius: 6px; padding: 6px 8px; box-sizing: border-box; background: #fff; }
+  .rowplot .cname { font-size: 14px; font-weight: 700; }
+  .matchbtn { font-size: 11px; padding: 2px 8px; margin-left: 8px; font-weight: 400;
+    border: 1px solid #888; border-radius: 4px; background: #f0f0f0; cursor: pointer; }
+  .matchbtn:hover { background: #e6e6e6; }
+  .rowplot .cinfo { font-size: 11px; color: #555; margin: 1px 0 4px; }
+  .plotbox { width: 100%; }
+  .plotbox > .plotly-graph-div { width: 100% !important; height: 100% !important; }
+
+  /* ---- table ---- */
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { padding: 4px 8px; border-bottom: 1px solid #eee; text-align: right; white-space: nowrap; }
+  th { position: sticky; top: 0; background: #f4f4f4; cursor: pointer; user-select: none;
+    border-bottom: 2px solid #ccc; }
+  th:hover { background: #e8e8e8; }
+  th.name, td.name { text-align: left; }
+  th .arrow { color: #4C78A8; }
+  td.name { font-weight: 600; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: #f5f9ff; }
+  tr.sel { background: #eef6ff; }
+  tr.sel:hover { background: #e2f0ff; }
+  tbody input[type=checkbox] { width: 16px; height: 16px; cursor: pointer; }
+  .filters input { width: 100%; box-sizing: border-box; font-size: 12px; padding: 2px 4px; }
+  .badge { display: inline-block; font-size: 10px; padding: 1px 5px; border-radius: 3px;
+    color: #fff; }
+  .badge.sim { background: #4C78A8; }
+  .badge.emp { background: #E45756; }
+  .muted { color: #ccc; }
+  .filter-help { background: #fff8e1; border: 1px solid #f0e0a0; border-radius: 6px;
+    padding: 8px 10px; max-width: 900px; }
+  code { background: #eee; padding: 0 4px; border-radius: 3px; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>Propeller Candidate Picker</h1>
+<p class="note">
+  All 611 merged propellers. Filter/sort the table, tick up to 12 to select, set the
+  controls, then press <b>Build plots</b> to draw a 2D slice (quantities vs RPM) for each
+  selected prop. Sliders and toggles only take effect on the next Build. Empirical (UIUC)
+  points are converted to the same dimensional units and overlaid as hollow markers.
+  A name prefixed with <b>~</b> (e.g. <code>pl_~4x3</code>) is an approximate
+  inches conversion of a millimeter-sized prop.
+</p>
+<p class="note filter-help">
+  <b>Filter box tip:</b> a column filter is normally a text match, but if you start it
+  with <b>&gt;</b>, <b>&lt;</b>, or <b>=</b> it becomes a numeric threshold on that
+  column. Examples: <code>&gt;10</code>, <code>&lt;=5</code>, <code>=4</code>,
+  <code>&gt;=12</code>. Use it on numeric columns (diameter, pitch, RPM, Vmax, thrust,
+  power) to keep only rows above/below/equal to a value; combine columns to narrow the set.
+</p>
+
+<div class="toolbar">
+  <div class="grp">
+    <button id="buildBtn" title="Ctrl+B">Build plots <span style="opacity:.7;font-weight:400">(Ctrl+B)</span></button>
+    <button id="deployBtn">Deploy 4 &rarr;</button>
+    <span class="count" id="selCount">0 plot / 0 deploy</span>
+  </div>
+  <div class="grp">
+    Show:
+    <button class="tog on" data-q="thrust">Thrust</button>
+    <button class="tog on" data-q="eff">Efficiency</button>
+    <button class="tog on" data-q="pt">Power</button>
+    <button id="ptSwitch" title="switch Power / Torque (same quantity)">&#8646;</button>
+  </div>
+  <div class="grp">
+    Source:
+    <button class="tog on" data-src="sim">Simulated</button>
+    <button class="tog on" data-src="emp">Empirical</button>
+  </div>
+  <div class="grp" style="margin-left:auto">
+    RPM range
+    <input type="range" id="rpmMin" min="0" max="60000" step="500" value="0">
+    <input type="range" id="rpmMax" min="0" max="60000" step="500" value="60000">
+    <span class="val" id="rpmLbl"></span>
+  </div>
+  <div class="grp">
+    Velocity slice
+    <input type="range" id="vel" min="0" max="100" step="1" value="0">
+    <span class="val" id="velLbl"></span>
+    <input type="number" id="thrustLine" class="tin" placeholder="thrust N" min="0" step="0.1"
+           title="draws a horizontal thrust reference line">
+  </div>
+</div>
+
+<div class="content">
+  <div class="tablewrap">
+    <table id="tbl">
+      <thead>
+        <tr id="hdr"></tr>
+        <tr class="filters" id="filterRow"></tr>
+      </thead>
+      <tbody id="body"></tbody>
+    </table>
+  </div>
+  <div class="plotcol" id="plotcol"></div>
+</div>
+
+<script>
+// ---- config -------------------------------------------------------------
+var MAX_SEL = 12;
+var MPH_TO_MS = 0.44704;    // the velocity slider is in m/s; sweep data is in mph
+
+// Curves and where they live:
+//   thrust -> left axis (y)          real axis + legend
+//   pt     -> right axis (y2)        Power OR Torque (the ptSwitch picks which)
+//   eff    -> hidden axis (y3)       NO axis/ticks; just a green 100% line at 1.0
+// power and torque are the same quantity in different units, so only ONE shows on
+// the right at a time -- that frees the right side to need at most one legend.
+var COLOR = { thrust: "#4C78A8", power: "#E45756", torque: "#B279A2", eff: "#54A24B" };
+var PT_LABEL = { power: "Power (W)", torque: "Torque (Nm)" };
+
+// the active quantity list for a plot, given the current Power/Torque mode
+function activeQuants() {
+  var list = [{ key: "thrust", label: "Thrust (N)", color: COLOR.thrust, axis: "y" }];
+  list.push({ key: ptMode, label: PT_LABEL[ptMode], color: COLOR[ptMode], axis: "y2" });
+  list.push({ key: "eff", label: "Efficiency", color: COLOR.eff, axis: "y3" });
+  return list;
+}
+
+// table columns: [field, header, is-name]
+var COLS = [
+  ["name",         "Name",        true ],
+  ["diameter_in",  "Dia (in)",    false],
+  ["pitch_in",     "Pitch (in)",  false],
+  ["blades",       "Blades",      false],
+  ["type",         "Type",        false],
+  ["rpm_min",      "RPM min",     false],
+  ["rpm_max",      "RPM max",     false],
+  ["v_max_mph",    "Vmax (mph)",  false],
+  ["max_thrust_N", "maxT (N)",    false],
+  ["max_power_W",  "maxP (W)",    false],
+  ["sources",      "Data",        false],  // derived badge column
+];
+
+var MAX_DEPLOY = 4;                     // in-depth visualizer takes at most 4 foils
+
+var DATA = window.PROP_DATA;            // [{summary, sim, emp}, ...]
+var selected = new Set();               // prop names ticked for plot-building (left col)
+var deploySel = new Set();              // prop names ticked for Deploy (2nd col, max 4)
+var sortKey = "name", sortAsc = true;
+var filters = {};                       // field -> lowercase substring
+
+// state read at Build time (snapshot of toolbar); plots do NOT live-update.
+// 'pt' is the show/hide for the shared Power/Torque curve; ptMode picks which one.
+var toggles = { thrust: true, eff: true, pt: true, sim: true, emp: true };
+var ptMode = "power";                    // "power" | "torque"
+
+// ---- helpers ------------------------------------------------------------
+function fmt(v) {
+  if (v === null || v === undefined || v === "") return "";
+  return (typeof v === "number") ? (Number.isInteger(v) ? v : v.toFixed(v < 10 ? 2 : 1)) : v;
+}
+
+function sourcesText(s) {                // used for filtering the Data column
+  return (s.has_sim ? "sim " : "") + (s.has_emp ? "emp" : "");
+}
+
+// linear-interpolate each RPM row of a sweep to the target speed, NEVER
+// extrapolating. Returns {rpm:[...], vals:{thrust:[...],...}} of the surviving
+// rows (a row is dropped if the target speed is outside its measured range).
+function sliceAtSpeed(sweep, targetV, wantKeys) {
+  // group point indices by rpm (rows are contiguous in the file, but group to be safe)
+  var rows = {};                         // rpm -> [indices]
+  for (var i = 0; i < sweep.rpm.length; i++) {
+    var k = sweep.rpm[i];
+    (rows[k] = rows[k] || []).push(i);
+  }
+  var outRpm = [], outVals = {};
+  wantKeys.forEach(function (q) { outVals[q] = []; });
+
+  Object.keys(rows).map(Number).sort(function (a, b) { return a - b; }).forEach(function (rpm) {
+    var idx = rows[rpm];
+    // sort this row's points by speed
+    idx.sort(function (a, b) { return sweep.V_mph[a] - sweep.V_mph[b]; });
+    var vs = idx.map(function (i) { return sweep.V_mph[i]; });
+    var lo = vs[0], hi = vs[vs.length - 1];
+    if (targetV < lo || targetV > hi) return;      // no extrapolation: skip row
+    // find bracketing pair
+    var j = 0;
+    while (j < vs.length - 1 && vs[j + 1] < targetV) j++;
+    var a = idx[j], b = idx[Math.min(j + 1, idx.length - 1)];
+    var va = sweep.V_mph[a], vb = sweep.V_mph[b];
+    var t = (vb === va) ? 0 : (targetV - va) / (vb - va);
+    outRpm.push(rpm);
+    wantKeys.forEach(function (q) {
+      outVals[q].push(sweep[q][a] + t * (sweep[q][b] - sweep[q][a]));
+    });
+  });
+  return { rpm: outRpm, vals: outVals };
+}
+
+// ---- table --------------------------------------------------------------
+function buildHeader() {
+  var hdr = document.getElementById("hdr");
+  var frow = document.getElementById("filterRow");
+  // two checkbox columns: [plot-build select] [deploy select]
+  hdr.innerHTML = "<th title='select for Build plots'>plot</th>"
+                + "<th title='select for Deploy (max 4)'>dep</th>";
+  frow.innerHTML = "<th></th><th></th>";
+  COLS.forEach(function (c) {
+    var key = c[0], label = c[1], isName = c[2];
+    var arrow = (sortKey === key) ? (" <span class='arrow'>" + (sortAsc ? "▲" : "▼") + "</span>") : "";
+    var th = document.createElement("th");
+    if (isName) th.className = "name";
+    th.innerHTML = label + arrow;
+    th.onclick = function () {
+      if (sortKey === key) sortAsc = !sortAsc; else { sortKey = key; sortAsc = true; }
+      render();
+    };
+    hdr.appendChild(th);
+
+    var ft = document.createElement("th");
+    if (isName) ft.className = "name";
+    if (key !== "sources") {
+      var inp = document.createElement("input");
+      inp.placeholder = "filter, Enter";
+      inp.value = filters[key] || "";
+      // apply only on Enter (not every keystroke) so a re-render doesn't interrupt
+      // typing or clear the crosshair/selection mid-word
+      inp.onkeydown = function (e) {
+        if (e.key === "Enter") { filters[key] = inp.value.toLowerCase(); render(); }
+      };
+      ft.appendChild(inp);
+    }
+    frow.appendChild(ft);
+  });
+}
+
+// A filter is either a plain substring match, or -- if it starts with >, <, or =
+// -- a numeric threshold on that column (e.g. ">10", "<=5", "=4"). >=, <= work too.
+function passesFilters(s) {
+  return COLS.every(function (c) {
+    var key = c[0];
+    var f = filters[key];
+    if (!f) return true;
+    var v = (key === "sources") ? sourcesText(s) : s[key];
+
+    var m = f.match(/^(>=|<=|=|>|<)\s*(-?\d+(?:\.\d+)?)$/);
+    if (m) {                              // numeric threshold
+      var num = parseFloat(v);            // the cell value as a number
+      if (isNaN(num)) return false;       // non-numeric cell can't satisfy a threshold
+      var t = parseFloat(m[2]);
+      switch (m[1]) {
+        case ">":  return num > t;
+        case "<":  return num < t;
+        case ">=": return num >= t;
+        case "<=": return num <= t;
+        case "=":  return num === t;
+      }
+    }
+    // plain substring match
+    return String(v === null || v === undefined ? "" : v).toLowerCase().indexOf(f) !== -1;
+  });
+}
+
+function render() {
+  buildHeader();
+  var rows = DATA.map(function (p) { return p.summary; }).filter(passesFilters);
+  rows.sort(function (a, b) {
+    var x = a[sortKey], y = b[sortKey];
+    if (sortKey === "sources") { x = sourcesText(a); y = sourcesText(b); }
+    if (x === null || x === undefined) x = -Infinity;
+    if (y === null || y === undefined) y = -Infinity;
+    if (x < y) return sortAsc ? -1 : 1;
+    if (x > y) return sortAsc ? 1 : -1;
+    return 0;
+  });
+
+  // any built plots are tied to the old row layout; a re-render invalidates them
+  clearPlots();
+
+  var body = document.getElementById("body");
+  body.innerHTML = "";
+  rows.forEach(function (s) {
+    var tr = document.createElement("tr");
+    tr.dataset.name = s.name;          // so buildPlots can find this row to align to
+    if (selected.has(s.name)) tr.className = "sel";
+
+    // --- column 1: plot-build select ---
+    var cb = document.createElement("td");
+    var box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = selected.has(s.name);
+    cb.appendChild(box);
+    tr.appendChild(cb);
+
+    // --- column 2: deploy select (max 4) ---
+    var cb2 = document.createElement("td");
+    var dbox = document.createElement("input");
+    dbox.type = "checkbox";
+    dbox.checked = deploySel.has(s.name);
+    cb2.appendChild(dbox);
+    tr.appendChild(cb2);
+
+    // toggle a set membership for this prop; returns false if it hit its max
+    function toggle(set, max, label) {
+      if (set.has(s.name)) {
+        set.delete(s.name);
+      } else {
+        if (set.size >= max) { alert("Max " + max + " " + label + "."); return false; }
+        set.add(s.name);
+      }
+      return true;
+    }
+    function toggleSel() {                // plot-build selection (col 1 + row click)
+      if (!toggle(selected, MAX_SEL, "selected")) return false;
+      box.checked = selected.has(s.name);
+      tr.className = selected.has(s.name) ? "sel" : "";
+      updateSelCount();
+      return true;
+    }
+    function toggleDeploy() {             // deploy selection (col 2 only)
+      if (!toggle(deploySel, MAX_DEPLOY, "for deploy")) return false;
+      dbox.checked = deploySel.has(s.name);
+      updateSelCount();
+      return true;
+    }
+
+    // clicking anywhere on the row toggles plot-select. Ignore clicks on either
+    // checkbox itself -- their own change handlers cover those (no double toggle).
+    tr.onclick = function (e) {
+      if (e.target === box || e.target === dbox) return;
+      toggleSel();
+    };
+    box.onchange = function () {
+      if (box.checked === selected.has(s.name)) return;   // already in sync
+      if (!toggleSel()) box.checked = selected.has(s.name);
+    };
+    dbox.onchange = function () {
+      if (dbox.checked === deploySel.has(s.name)) return;
+      if (!toggleDeploy()) dbox.checked = deploySel.has(s.name);
+    };
+
+    COLS.forEach(function (c) {
+      var key = c[0], isName = c[2];
+      var td = document.createElement("td");
+      if (isName) td.className = "name";
+      if (key === "sources") {
+        td.innerHTML = (s.has_sim ? "<span class='badge sim'>SIM</span> " : "")
+                     + (s.has_emp ? "<span class='badge emp'>EMP</span>" : "")
+                     + (!s.has_sim && !s.has_emp ? "<span class='muted'>&mdash;</span>" : "");
+      } else {
+        td.textContent = fmt(s[key]);
+      }
+      tr.appendChild(td);
+    });
+    body.appendChild(tr);
+  });
+  document.getElementById("rowInfo") && (document.getElementById("rowInfo").textContent = rows.length + " shown");
+}
+
+function updateSelCount() {
+  document.getElementById("selCount").textContent =
+    selected.size + " plot / " + deploySel.size + " deploy";
+}
+
+// ---- toolbar wiring -----------------------------------------------------
+function initToolbar() {
+  var rpmMin = document.getElementById("rpmMin"),
+      rpmMax = document.getElementById("rpmMax"),
+      vel = document.getElementById("vel");
+
+  // set slider bounds from the data (max rpm / max speed across all props)
+  var maxRpm = 0, maxV = 0;
+  DATA.forEach(function (p) {
+    var s = p.summary;
+    if (s.rpm_max) maxRpm = Math.max(maxRpm, s.rpm_max);
+    if (s.v_max_mph) maxV = Math.max(maxV, s.v_max_mph);
+  });
+  maxRpm = Math.ceil(maxRpm / 1000) * 1000;
+  maxV = Math.ceil(maxV * MPH_TO_MS / 5) * 5;    // slider is in m/s
+  rpmMin.max = rpmMax.max = maxRpm; rpmMax.value = maxRpm;
+  vel.max = maxV;
+
+  function lblRpm() {
+    var lo = +rpmMin.value, hi = +rpmMax.value;
+    if (lo > hi) { var t = lo; lo = hi; hi = t; }
+    document.getElementById("rpmLbl").textContent = lo + " - " + hi;
+  }
+  function lblVel() { document.getElementById("velLbl").textContent = (+vel.value) + " m/s"; }
+  rpmMin.oninput = rpmMax.oninput = lblRpm;
+  vel.oninput = lblVel;
+  lblRpm(); lblVel();
+
+  // quantity + source toggle buttons (visual only until Build)
+  document.querySelectorAll(".tog").forEach(function (b) {
+    b.onclick = function () {
+      b.classList.toggle("on");
+      var q = b.dataset.q, src = b.dataset.src;
+      if (q) toggles[q] = b.classList.contains("on");
+      if (src) toggles[src] = b.classList.contains("on");
+    };
+  });
+
+  // Power <-> Torque switch: flips which one the shared right-axis curve shows,
+  // and relabels the button. Does not change the on/off state.
+  document.getElementById("ptSwitch").onclick = function () {
+    ptMode = (ptMode === "power") ? "torque" : "power";
+    var ptBtn = document.querySelector('.tog[data-q="pt"]');
+    ptBtn.textContent = (ptMode === "power") ? "Power" : "Torque";
+  };
+
+  document.getElementById("buildBtn").onclick = buildPlots;
+  document.getElementById("deployBtn").onclick = deploy;
+
+  // Ctrl+B rebuilds the plots (same as clicking Build plots)
+  document.addEventListener("keydown", function (e) {
+    if (e.ctrlKey && !e.altKey && !e.metaKey && (e.key === "b" || e.key === "B")) {
+      e.preventDefault();
+      buildPlots();
+    }
+  });
+}
+
+// ---- build the selected props' slice plots ------------------------------
+var PLOT_H = 440;         // px height of each built plot (and its row's dead space)
+
+// remove all built plots and any dead-space heights added to rows
+function clearPlots() {
+  var col = document.getElementById("plotcol");
+  if (col) col.innerHTML = "";
+  document.querySelectorAll("#body tr").forEach(function (tr) { tr.style.height = ""; });
+}
+
+// clip a sliced sweep to the rpm range -> {rpm:[...], vals:{key:[...]}}
+function clipSlice(sweep, velV, wantKeys, rpmMin, rpmMax) {
+  var sl = sliceAtSpeed(sweep, velV, wantKeys);
+  var out = { rpm: [], vals: {} };
+  wantKeys.forEach(function (q) { out.vals[q] = []; });
+  for (var i = 0; i < sl.rpm.length; i++) {
+    if (sl.rpm[i] < rpmMin || sl.rpm[i] > rpmMax) continue;
+    out.rpm.push(sl.rpm[i]);
+    wantKeys.forEach(function (q) { out.vals[q].push(sl.vals[q][i]); });
+  }
+  return out;
+}
+
+function buildPlots() {
+  // snapshot toolbar state now (this is the only time plots read it)
+  var rpmMin = +document.getElementById("rpmMin").value;
+  var rpmMax = +document.getElementById("rpmMax").value;
+  if (rpmMin > rpmMax) { var t = rpmMin; rpmMin = rpmMax; rpmMax = t; }
+  var velMs = +document.getElementById("vel").value;    // slider is in m/s
+  var velV = velMs / MPH_TO_MS;                          // slice data is in mph
+  var thrustN = parseFloat(document.getElementById("thrustLine").value);  // NaN if blank
+
+  // map each active curve to its on/off toggle (power & torque both use 'pt')
+  var togKey = { thrust: "thrust", eff: "eff", power: "pt", torque: "pt" };
+  var wantQ = activeQuants().filter(function (q) { return toggles[togKey[q.key]]; });
+  var wantKeys = wantQ.map(function (q) { return q.key; });
+
+  clearPlots();
+  if (selected.size === 0) { alert("Tick some props first (up to " + MAX_SEL + ")."); return; }
+  if (wantKeys.length === 0) { alert("Turn on at least one quantity."); return; }
+
+  var byName = {};
+  DATA.forEach(function (p) { byName[p.summary.name] = p; });
+
+  // 1) pre-slice every selected prop and find the SHARED max per quantity, so
+  //    every plot uses [0, sharedMax] for a given quantity (same scale across all
+  //    cards) -- exactly like the demo.
+  var built = [];                        // {name, p, s, slSim, slEmp}
+  var sharedMax = {};
+  wantKeys.forEach(function (q) { sharedMax[q] = 0; });
+  selected.forEach(function (name) {
+    var p = byName[name];
+    if (!p) return;
+    var slSim = (toggles.sim && p.sim) ? clipSlice(p.sim, velV, wantKeys, rpmMin, rpmMax) : null;
+    var slEmp = (toggles.emp && p.emp) ? clipSlice(p.emp, velV, wantKeys, rpmMin, rpmMax) : null;
+    [slSim, slEmp].forEach(function (sl) {
+      if (!sl) return;
+      wantKeys.forEach(function (q) {
+        sl.vals[q].forEach(function (v) { if (v > sharedMax[q]) sharedMax[q] = v; });
+      });
+    });
+    built.push({ name: name, p: p, s: p.summary, slSim: slSim, slEmp: slEmp });
+  });
+  wantKeys.forEach(function (q) { if (sharedMax[q] <= 0) sharedMax[q] = 1; });
+
+  // 2) for each selected prop: grow its table row to make dead space, then pin a
+  //    plot next to it in the right column at that row's vertical offset.
+  var col = document.getElementById("plotcol");
+
+  built.forEach(function (b) {
+    var tr = document.querySelector('#body tr[data-name="' + cssEscape(b.name) + '"]');
+    if (!tr) return;                     // row filtered out of view -> skip its plot
+    tr.style.height = PLOT_H + "px";     // dead space so following rows drop down
+  });
+
+  // Read offsets AFTER all heights are applied (so they reflect the new layout).
+  // Each .rowplot is absolutely positioned inside .plotcol, so its 'top' must be
+  // measured relative to .plotcol's top. Both rects are read at the same instant,
+  // so the page scroll offset cancels out and the result is scroll-independent.
+  var colTop = col.getBoundingClientRect().top;
+  built.forEach(function (b) {
+    var tr = document.querySelector('#body tr[data-name="' + cssEscape(b.name) + '"]');
+    if (!tr) return;
+    var top = tr.getBoundingClientRect().top - colTop;
+
+    var wrap = document.createElement("div");
+    wrap.className = "rowplot";
+    wrap.style.top = top + "px";
+    wrap.style.height = PLOT_H + "px";
+    var pid = "plot_" + b.name.replace(/[^a-zA-Z0-9]/g, "_");
+    var mbid = "matchbtn_" + b.name.replace(/[^a-zA-Z0-9]/g, "_");
+    wrap.innerHTML = "<div class='cname'>" + b.name
+      + " <button class='matchbtn' id='" + mbid + "'>Match motor &rarr;</button></div>"
+      + "<div class='cinfo'>" + b.s.diameter_in + "×" + b.s.pitch_in + " in, "
+      + b.s.blades + " blade" + (b.s.blades === 2 ? "" : "s")
+      + (b.s.type ? " &middot; " + b.s.type : "")
+      + " &middot; V = " + velMs + " m/s</div>"
+      + "<div class='plotbox' id='" + pid + "'></div>";
+    col.appendChild(wrap);
+
+    // the plotbox fills what's left of the card under the two text lines
+    var box = document.getElementById(pid);
+    box.style.height = (PLOT_H - 40) + "px";
+    plotOne(pid, b, wantQ, rpmMin, rpmMax, sharedMax, thrustN);
+
+    document.getElementById(mbid).onclick = function () { openMotorMatch(b.name); };
+  });
+}
+
+// minimal CSS.escape shim (prop names can contain '.', '(', etc.)
+function cssEscape(s) { return s.replace(/["\\]/g, "\\$&"); }
+
+function traceFor(sl, q, isEmp, color) {
+  return {
+    x: sl.rpm, y: sl.vals[q.key], yaxis: q.axis,
+    name: (isEmp ? "emp " : "") + q.label,
+    mode: isEmp ? "markers" : "markers+lines",
+    marker: isEmp
+      ? { size: 7, color: color, symbol: "circle-open", line: { width: 1.5 } }
+      : { size: 4, color: color },
+    line: { color: color, width: 1 },
+    showlegend: false,
+  };
+}
+
+function plotOne(pid, b, wantQ, rpmMin, rpmMax, sharedMax, thrustN) {
+  var traces = [];
+  wantQ.forEach(function (q) {
+    if (b.slSim) traces.push(traceFor(b.slSim, q, false, q.color));
+    if (b.slEmp) traces.push(traceFor(b.slEmp, q, true, q.color));
+  });
+
+  // Only thrust (left) and the power/torque curve (right) get real axes. There is
+  // now at most ONE right axis, so the plot can use more width for the data.
+  var layout = {
+    margin: { l: 46, r: 12, t: 4, b: 30 },
+    xaxis: { title: "RPM", range: [rpmMin, rpmMax], domain: [0.0, 0.90], showgrid: false },
+    autosize: true,
+  };
+  wantQ.forEach(function (q) {
+    if (q.key === "eff") {
+      // hidden axis: no title, no ticks -- efficiency is shown only via the green
+      // 100% reference line. Top at 1.05 so the 100% line sits just below the top.
+      layout.yaxis3 = { range: [0, 1.05], overlaying: "y", side: "right",
+                        showticklabels: false, showgrid: false, zeroline: false };
+      return;
+    }
+    var cfg = { title: { text: q.label, font: { color: q.color } },
+                tickfont: { color: q.color }, range: [0, sharedMax[q.key]],
+                showgrid: false };
+    if (q.axis === "y") {
+      layout.yaxis = cfg;                         // the single left axis (thrust)
+    } else {
+      cfg.overlaying = "y"; cfg.side = "right";   // the single right axis (pwr/trq)
+      layout["yaxis" + q.axis.slice(1)] = cfg;
+    }
+  });
+
+  layout.shapes = [];
+  // green dotted 100%-efficiency reference line (pinned to the hidden eff axis),
+  // only when efficiency is being shown
+  if (wantQ.some(function (q) { return q.key === "eff"; })) {
+    layout.shapes.push({
+      type: "line", xref: "x domain", x0: 0, x1: 1, yref: "y3", y0: 1, y1: 1,
+      line: { color: COLOR.eff, width: 1, dash: "dot" },
+    });
+  }
+  // thin translucent blue thrust reference line (on the Thrust axis), only when
+  // a value is entered AND thrust is being plotted (its 'y' axis exists)
+  if (typeof thrustN === "number" && isFinite(thrustN) && thrustN > 0 &&
+      wantQ.some(function (q) { return q.key === "thrust"; })) {
+    layout.shapes.push({
+      type: "line", xref: "x domain", x0: 0, x1: 1, yref: "y",
+      y0: thrustN, y1: thrustN,
+      line: { color: "rgba(30,120,255,0.55)", width: 1.5 },
+    });
+  }
+
+  Plotly.newPlot(pid, traces, layout, { displayModeBar: false, responsive: true });
+}
+
+// ---- deploy: open the in-depth visualizer (Part B) in a new tab ----------
+// Based on obs/demo.html: each prop is a card with three 3D scatters (Thrust,
+// Power, Efficiency) over (RPM, speed), plus two 2D speed slices, all on axes
+// shared across the deployed props so equal screen positions mean equal values.
+// Empirical (UIUC) points are overlaid where a prop has them. The generated page
+// loads plotly.min.js + picker_data.js from THIS page's folder (absolute URLs), so
+// it runs offline just like the picker.
+function deploy() {
+  if (deploySel.size === 0) {
+    alert("Tick the 'dep' box on 1-4 props to deploy (right of the plot box).");
+    return;
+  }
+  var names = Array.from(deploySel);            // 1..4 props
+
+  // absolute URLs to the sibling scripts, resolved against the picker's location
+  var plotlyUrl = new URL("plotly.min.js", location.href).href;
+  var dataUrl = new URL("picker_data.js", location.href).href;
+
+  var win = window.open("", "_blank");
+  if (!win) { alert("Popup blocked - allow popups for this page to deploy."); return; }
+
+  // the child page: load libs, then run VISUALIZER_JS against the chosen names
+  var doc = "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+    + "<title>Prop Visualizer</title>"
+    + "<script src='" + plotlyUrl + "'><\/script>"
+    + "<script src='" + dataUrl + "'><\/script>"
+    + "<style>" + VISUALIZER_CSS + "<\/style></head><body>"
+    + "<h1>In-depth Propeller Visualizer</h1>"
+    + "<p class='note'>Every dot is a real point on shared axes: Thrust plots share one "
+    + "Newton scale, Power one Watt scale, Efficiency one scale; RPM and speed axes are "
+    + "shared too. Hollow markers are empirical (UIUC). Set the sliders, then press the "
+    + "left <b>2D Rebuild</b> (re-slices from RPM + V1/V2) or <b>3D Rebuild</b> (copies "
+    + "the top-left 3D angle to every plot). Nothing updates until you rebuild.</p>"
+    + "<div class='toolbar'>"
+    + "  <span class='ctl'>RPM range "
+    + "    <input type='range' id='rpmMin' min='0' max='60000' step='500' value='0'>"
+    + "    <input type='range' id='rpmMax' min='0' max='60000' step='500' value='60000'>"
+    + "    <span class='val' id='rpmLbl'></span></span>"
+    + "  <span class='ctl slicepill pill1'>V1 "
+    + "    <input type='range' id='v1' min='0' max='100' step='1' value='0'>"
+    + "    <span class='val' id='v1Lbl'></span>"
+    + "    <input type='number' id='t1' class='tin' placeholder='thrust N' min='0' step='0.1'>"
+    + "  </span>"
+    + "  <span class='ctl slicepill pill2'>V2 "
+    + "    <input type='range' id='v2' min='0' max='100' step='1' value='18'>"
+    + "    <span class='val' id='v2Lbl'></span>"
+    + "    <input type='number' id='t2' class='tin' placeholder='thrust N' min='0' step='0.1'>"
+    + "  </span>"
+    + "</div>"
+    + "<div id='grid' class='vgrid'>"
+    + "  <div class='bubble bubble2d' id='rebuild2d' title='Ctrl+B'><span>2D Rebuild &#8635; (Ctrl+B)<\/span><\/div>"
+    + "  <div class='bubble bubble3d' id='rebuild3d'><span>3D Rebuild &#8635;<\/span><\/div>"
+    + "<\/div>"
+    + "<script>var DEPLOY_NAMES=" + JSON.stringify(names) + ";"
+    + "(" + VISUALIZER_JS.toString() + ")();<\/script>"
+    + "</body></html>";
+  win.document.open();
+  win.document.write(doc);
+  win.document.close();
+}
+
+// ---- motor match: open a new tab for ONE prop, showing its torque-vs-RPM
+// curve at a chosen air velocity overlaid with a motor's straight-line
+// torque-speed curve (stall torque at RPM=0 down to 0 torque at free RPM).
+// The crossing point is the equilibrium operating point. ----
+function openMotorMatch(propName) {
+  var plotlyUrl = new URL("plotly.min.js", location.href).href;
+  var dataUrl = new URL("picker_data.js", location.href).href;
+  var motorsUrl = new URL("motors/motors_data.js", location.href).href;
+
+  var win = window.open("", "_blank");
+  if (!win) { alert("Popup blocked - allow popups for this page."); return; }
+
+  var doc = "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+    + "<title>Motor Match: " + propName + "</title>"
+    + "<script src='" + plotlyUrl + "'><\/script>"
+    + "<script src='" + dataUrl + "'><\/script>"
+    + "<script src='" + motorsUrl + "'><\/script>"
+    + "<style>" + MOTOR_MATCH_CSS + "<\/style></head><body>"
+    + "<h1>Motor Match: " + propName + "</h1>"
+    + "<p class='note'>Prop torque-vs-RPM (at the chosen air velocity) overlaid with "
+    + "the motor's straight-line torque-speed curve. Where they cross is the "
+    + "equilibrium operating point.</p>"
+    + "<div class='toolbar'>"
+    + "  <span class='ctl'>Motor "
+    + "    <select id='motorSel'></select></span>"
+    + "  <span class='ctl'>Stall torque (Nm) "
+    + "    <input type='range' id='stallTSlider' min='0' max='10' step='0.01' value='0'>"
+    + "    <input type='number' id='stallT' step='0.01' style='width:70px'></span>"
+    + "  <span class='ctl'>Free RPM "
+    + "    <input type='range' id='freeRpmSlider' min='0' max='100000' step='1000' value='0'>"
+    + "    <input type='number' id='freeRpm' step='1000' style='width:70px'></span>"
+    + "  <span class='ctl'>Scale factor "
+    + "    <input type='range' id='scaleSlider' min='0' max='20' step='0.1' value='1'>"
+    + "    <input type='number' id='scaleBox' step='0.1' style='width:60px' value='1'></span>"
+    + "  <span class='ctl'>Data <select id='srcSel'>"
+    + "    <option value='sim' selected>Simulated</option>"
+    + "    <option value='emp'>Empirical</option></select></span>"
+    + "  <span class='ctl'>Air velocity (m/s) "
+    + "    <input type='range' id='vel' min='0' max='100' step='1' value='0'>"
+    + "    <span class='val' id='velLbl'></span></span>"
+    + "  <span class='ctl' id='velRangeLbl'></span>"
+    + "  <span class='ctl'>New motor name <input type='text' id='newMotorName' style='width:120px'>"
+    + "    <button id='addMotorBtn'>Add as new motor</button></span>"
+    + "</div>"
+    + "<div class='plotwrap'><div id='matchPlot'></div></div>"
+    + "<div class='result' id='resultLbl'></div>"
+    + "<div class='thrustBig' id='thrustBig'></div>"
+    + "<script>var MATCH_PROP_NAME=" + JSON.stringify(propName) + ";"
+    + "(" + MOTOR_MATCH_JS.toString() + ")();<\/script>"
+    + "</body></html>";
+  win.document.open();
+  win.document.write(doc);
+  win.document.close();
+}
+
+var MOTOR_MATCH_CSS = ""
+  + "body{font-family:system-ui,sans-serif;margin:12px;color:#111;background:#fff}"
+  + "h1{font-size:19px;margin:0 0 4px}"
+  + ".note{color:#555;font-size:13px;max-width:900px;margin:0 0 10px}"
+  + ".toolbar{position:sticky;top:0;z-index:5;background:#fafafa;border:1px solid #ddd;"
+  + "border-radius:6px;padding:8px 12px;margin-bottom:10px;display:flex;flex-wrap:wrap;"
+  + "gap:10px 20px;align-items:center}"
+  + ".ctl{font-size:13px}"
+  + ".ctl input[type=range]{width:150px;vertical-align:middle}"
+  + ".ctl input[type=number],.ctl select{font-size:13px;padding:2px 4px}"
+  + ".val{font-variant-numeric:tabular-nums;color:#333;min-width:60px;display:inline-block}"
+  + "#velRangeLbl{color:#777;font-size:12px}"
+  + "button{font-size:13px;padding:6px 12px;cursor:pointer;border:1px solid #888;"
+  + "border-radius:4px;background:#4C78A8;color:#fff;font-weight:600}"
+  + "button:hover{background:#3d6690}"
+  + ".plotwrap{border:1px solid #ccc;border-radius:6px;padding:6px}"
+  + "#matchPlot{width:100%;height:520px}"
+  + "#matchPlot>.plotly-graph-div{width:100%!important;height:100%!important}"
+  + ".result{margin-top:10px;font-size:14px;font-weight:600;line-height:1.8}"
+  + ".lineSwatch{display:inline-block;width:30px;border-top:4px solid #B279A2;"
+  + "margin-right:10px;vertical-align:middle}"
+  + ".lineSwatch.dotted{border-top-style:dotted}"
+  + ".thrustBig{margin-top:12px;font-size:36px;font-weight:800;color:#111}"
+  + ".thrustBig .num,.thrustBig .unit{font-size:64px;font-weight:900}";
+
+// Runs inside the generated tab. Stringified and re-parsed there, so it may
+// ONLY use: window.PROP_DATA, window.MOTOR_DATA, MATCH_PROP_NAME, Plotly, DOM.
+function MOTOR_MATCH_JS() {
+  var byName = {};
+  window.PROP_DATA.forEach(function (p) { byName[p.summary.name] = p; });
+  var prop = byName[MATCH_PROP_NAME];
+  if (!prop) { document.body.insertAdjacentHTML("beforeend", "<p>Prop not found.</p>"); return; }
+
+  var motorSel = document.getElementById("motorSel");
+  var stallEl = document.getElementById("stallT");
+  var stallSliderEl = document.getElementById("stallTSlider");
+  var freeEl = document.getElementById("freeRpm");
+  var freeSliderEl = document.getElementById("freeRpmSlider");
+  var scaleSliderEl = document.getElementById("scaleSlider");
+  var scaleBoxEl = document.getElementById("scaleBox");
+  var srcSel = document.getElementById("srcSel");
+  var velEl = document.getElementById("vel");
+  var velLbl = document.getElementById("velLbl");
+  var velRangeLbl = document.getElementById("velRangeLbl");
+
+  // keep a slider and its paired number box in sync both ways, without an
+  // infinite loop: setting .value never fires 'input', so this is safe. Both
+  // sides call onSync (rebuild) directly, since setting .value doesn't dispatch it.
+  function linkSliderAndBox(slider, box, onSync) {
+    slider.oninput = function () { box.value = slider.value; onSync(); };
+    box.oninput = function () {
+      var v = parseFloat(box.value);
+      if (isFinite(v)) slider.value = v;   // out-of-slider-range values clamp visually, box keeps the real value
+      onSync();
+    };
+  }
+
+  // populate the motor dropdown from motors/motors_data.js; picking one fills
+  // in stall torque / free RPM, which stay editable afterward.
+  var motors = window.MOTOR_DATA || [];
+  motors.forEach(function (m, i) {
+    var opt = document.createElement("option");
+    opt.value = i;
+    opt.textContent = m.name;
+    motorSel.appendChild(opt);
+  });
+  function applyMotor(i) {
+    var m = motors[i];
+    if (!m) return;
+    stallEl.value = m.stall_torque_Nm;
+    stallSliderEl.value = m.stall_torque_Nm;
+    freeEl.value = m.free_rpm;
+    freeSliderEl.value = m.free_rpm;
+  }
+  motorSel.onchange = function () { applyMotor(+motorSel.value); };
+  if (motors.length) { motorSel.value = 0; applyMotor(0); }
+
+  // MPH_TO_MS matches the picker's convention: slider in m/s, sweep data in mph.
+  var MPH_TO_MS = 0.44704;
+
+  // available velocity range for the currently chosen data source (sim/emp)
+  function velRangeMph(sweep) {
+    var lo = Infinity, hi = -Infinity;
+    for (var i = 0; i < sweep.V_mph.length; i++) {
+      var v = sweep.V_mph[i];
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }
+    return [lo, hi];
+  }
+
+  function currentSweep() {
+    var key = srcSel.value;
+    var sw = prop[key];
+    if (!sw) { sw = prop[key === "sim" ? "emp" : "sim"]; }   // fall back if missing
+    return sw;
+  }
+
+  function refreshVelRange() {
+    var sw = currentSweep();
+    if (!sw) { velRangeLbl.textContent = "no data"; return; }
+    var r = velRangeMph(sw);
+    var loMs = r[0] * MPH_TO_MS, hiMs = r[1] * MPH_TO_MS;
+    velEl.min = 0;
+    velEl.max = Math.ceil(hiMs);
+    if (+velEl.value > +velEl.max) velEl.value = velEl.max;
+    velRangeLbl.textContent = "available: " + loMs.toFixed(0) + "-" + hiMs.toFixed(0) + " m/s";
+  }
+  srcSel.onchange = refreshVelRange;
+  refreshVelRange();
+
+  function lblVel() { velLbl.textContent = (+velEl.value) + " m/s"; }
+  velEl.oninput = lblVel;
+  lblVel();
+
+  // interpolate the sweep's torque/thrust/eff to one target speed, one RPM per
+  // row, never extrapolating past a row's measured speed range (same method as
+  // the picker's sliceAtSpeed).
+  function sliceTorque(sweep, targetVmph) {
+    var rows = {};
+    for (var i = 0; i < sweep.rpm.length; i++) {
+      var k = sweep.rpm[i];
+      (rows[k] = rows[k] || []).push(i);
+    }
+    var outRpm = [], outTorque = [], outThrust = [], outEff = [];
+    Object.keys(rows).map(Number).sort(function (a, b) { return a - b; }).forEach(function (rpm) {
+      var idx = rows[rpm].slice().sort(function (a, b) { return sweep.V_mph[a] - sweep.V_mph[b]; });
+      var vs = idx.map(function (i) { return sweep.V_mph[i]; });
+      var lo = vs[0], hi = vs[vs.length - 1];
+      if (targetVmph < lo || targetVmph > hi) return;
+      var j = 0;
+      while (j < vs.length - 1 && vs[j + 1] < targetVmph) j++;
+      var a = idx[j], b = idx[Math.min(j + 1, idx.length - 1)];
+      var va = sweep.V_mph[a], vb = sweep.V_mph[b];
+      var t = (vb === va) ? 0 : (targetVmph - va) / (vb - va);
+      outRpm.push(rpm);
+      outTorque.push(sweep.torque[a] + t * (sweep.torque[b] - sweep.torque[a]));
+      outThrust.push(sweep.thrust[a] + t * (sweep.thrust[b] - sweep.thrust[a]));
+      outEff.push(sweep.eff[a] + t * (sweep.eff[b] - sweep.eff[a]));
+    });
+    return { rpm: outRpm, torque: outTorque, thrust: outThrust, eff: outEff };
+  }
+
+  // linear-interpolate one of the sliced arrays to an arbitrary RPM (the crossing
+  // point rarely lands exactly on a sampled RPM).
+  function interpAt(rpmArr, valArr, targetRpm) {
+    if (rpmArr.length === 0) return null;
+    if (targetRpm <= rpmArr[0]) return valArr[0];
+    if (targetRpm >= rpmArr[rpmArr.length - 1]) return valArr[valArr.length - 1];
+    for (var i = 0; i < rpmArr.length - 1; i++) {
+      var r0 = rpmArr[i], r1 = rpmArr[i + 1];
+      if (targetRpm >= r0 && targetRpm <= r1) {
+        var t = (r1 === r0) ? 0 : (targetRpm - r0) / (r1 - r0);
+        return valArr[i] + t * (valArr[i + 1] - valArr[i]);
+      }
+    }
+    return null;
+  }
+
+  // find where the motor's straight line crosses the prop's torque curve
+  // (piecewise-linear between sampled RPM points). Returns {rpm, torque} or null.
+  function findCrossing(propRpm, propTorque, stallT, freeRpm) {
+    function motorTorque(rpm) { return stallT * (1 - rpm / freeRpm); }
+    for (var i = 0; i < propRpm.length - 1; i++) {
+      var r0 = propRpm[i], r1 = propRpm[i + 1];
+      var d0 = propTorque[i] - motorTorque(r0);
+      var d1 = propTorque[i + 1] - motorTorque(r1);
+      if (d0 === 0) return { rpm: r0, torque: propTorque[i] };
+      if ((d0 > 0) !== (d1 > 0)) {         // sign change -> crossing in this segment
+        var t = d0 / (d0 - d1);
+        var rpm = r0 + t * (r1 - r0);
+        return { rpm: rpm, torque: motorTorque(rpm) };
+      }
+    }
+    return null;
+  }
+
+  function build() {
+    var sw = currentSweep();
+    var resultLbl = document.getElementById("resultLbl");
+    if (!sw) { resultLbl.textContent = "No data for this source."; return; }
+
+    var velMs = +velEl.value;
+    var velMph = velMs / MPH_TO_MS;
+    var sl = sliceTorque(sw, velMph);
+
+    var stallT = parseFloat(stallEl.value);
+    var freeRpm = parseFloat(freeEl.value);
+    var scale = parseFloat(scaleBoxEl.value);
+    var stallT2 = stallT * scale;
+    var freeRpm2 = freeRpm * scale;
+
+    var traces = [];
+    traces.push({
+      x: sl.rpm, y: sl.torque, yaxis: "y", mode: "markers+lines", name: "Prop torque",
+      marker: { size: 5, color: "#4C78A8" }, line: { color: "#4C78A8", width: 2 },
+    });
+    traces.push({
+      x: sl.rpm, y: sl.thrust, yaxis: "y2", mode: "markers+lines", name: "Prop thrust",
+      marker: { size: 5, color: "#E45756" }, line: { color: "#E45756", width: 2 },
+    });
+    traces.push({
+      x: sl.rpm, y: sl.eff, yaxis: "y3", mode: "markers+lines", name: "Prop efficiency",
+      marker: { size: 5, color: "#54A24B" }, line: { color: "#54A24B", width: 2 },
+    });
+
+    var maxRpm = Math.max(sl.rpm.length ? Math.max.apply(null, sl.rpm) : 0, freeRpm || 0, freeRpm2 || 0);
+    var crossing = null, crossing2 = null;
+    if (isFinite(stallT) && isFinite(freeRpm) && freeRpm > 0 && sl.rpm.length >= 2) {
+      traces.push({
+        x: [0, freeRpm], y: [stallT, 0], yaxis: "y", mode: "lines", name: "Motor torque",
+        line: { color: "#B279A2", width: 2 },
+      });
+      crossing = findCrossing(sl.rpm, sl.torque, stallT, freeRpm);
+      if (crossing) {
+        traces.push({
+          x: [crossing.rpm], y: [crossing.torque], yaxis: "y", mode: "markers", name: "Operating point",
+          marker: { size: 12, color: "#000", symbol: "star" },
+        });
+      }
+    }
+    if (isFinite(stallT2) && isFinite(freeRpm2) && freeRpm2 > 0 && sl.rpm.length >= 2) {
+      traces.push({
+        x: [0, freeRpm2], y: [stallT2, 0], yaxis: "y", mode: "lines", name: "Motor torque (scaled)",
+        line: { color: "#B279A2", width: 2, dash: "dot" },
+      });
+      crossing2 = findCrossing(sl.rpm, sl.torque, stallT2, freeRpm2);
+      if (crossing2) {
+        traces.push({
+          x: [crossing2.rpm], y: [crossing2.torque], yaxis: "y", mode: "markers", name: "Operating point (scaled)",
+          marker: { size: 12, color: "#000", symbol: "star-open" },
+        });
+      }
+    }
+
+    var maxTorque = sl.torque.length
+      ? Math.max.apply(null, sl.torque.concat(isFinite(stallT) ? [stallT] : []).concat(isFinite(stallT2) ? [stallT2] : []))
+      : 1;
+    var maxThrust = sl.thrust.length ? Math.max.apply(null, sl.thrust) : 1;
+
+    Plotly.newPlot("matchPlot", traces, {
+      xaxis: { title: "RPM", range: [0, maxRpm * 1.05], domain: [0, 0.85] },
+      yaxis: { title: { text: "Torque (Nm)", font: { color: "#4C78A8" } },
+               tickfont: { color: "#4C78A8" }, range: [0, maxTorque * 1.05] },
+      yaxis2: { title: { text: "Thrust (N)", font: { color: "#E45756" } },
+                tickfont: { color: "#E45756" }, range: [0, maxThrust * 1.05],
+                overlaying: "y", side: "right" },
+      yaxis3: { range: [0, 1.05], overlaying: "y", side: "right",
+                showticklabels: false, showgrid: false, zeroline: false },
+      shapes: [{ type: "line", xref: "x domain", x0: 0, x1: 1, yref: "y3",
+                 y0: 1, y1: 1, line: { color: "#54A24B", width: 1, dash: "dot" } }],
+      margin: { l: 60, r: 60, t: 10, b: 40 },
+      legend: { orientation: "h" },
+      autosize: true,
+    }, { displayModeBar: false, responsive: true });
+
+    var thrustLbl = document.getElementById("thrustBig");
+    if (!isFinite(stallT) || !isFinite(freeRpm)) {
+      resultLbl.textContent = "Enter stall torque and free RPM.";
+      thrustLbl.innerHTML = "";
+      return;
+    }
+    if (sl.rpm.length < 2) {
+      resultLbl.textContent = "No prop data at this air velocity.";
+      thrustLbl.innerHTML = "";
+      return;
+    }
+    resultLbl.textContent = "";
+
+    // one big thrust readout per motor curve: "— solid" for the entered values,
+    // "···· dotted" for the scaled ones, matching the plot's line styles.
+    function thrustRow(dash, crossingPt) {
+      var swatch = "<span class='lineSwatch " + dash + "'></span>";
+      if (!crossingPt) return "<div>" + swatch + "no crossing in range</div>";
+      var thrustAtX = interpAt(sl.rpm, sl.thrust, crossingPt.rpm);
+      return "<div>" + swatch
+        + "<span class='num'>" + thrustAtX.toFixed(2) + "</span> <span class='unit'>N</span></div>";
+    }
+    thrustLbl.innerHTML = thrustRow("solid", crossing) + thrustRow("dotted", crossing2);
+  }
+
+  // auto-rebuild: every control redraws immediately, no button needed
+  motorSel.addEventListener("change", build);
+  linkSliderAndBox(stallSliderEl, stallEl, build);
+  linkSliderAndBox(freeSliderEl, freeEl, build);
+  linkSliderAndBox(scaleSliderEl, scaleBoxEl, build);
+  srcSel.addEventListener("change", build);
+  velEl.addEventListener("input", build);
+  build();
+
+  // "Add as new motor": copies a motors.json-shaped snippet to the clipboard.
+  // Paste it into motors/motors.json's array, then re-run build_motors.py.
+  var newNameEl = document.getElementById("newMotorName");
+  document.getElementById("addMotorBtn").onclick = function () {
+    var name = newNameEl.value.trim();
+    if (!name) { alert("Enter a name for the new motor first."); return; }
+    var stallT = parseFloat(stallEl.value);
+    var freeRpm = parseFloat(freeEl.value);
+    if (!isFinite(stallT) || !isFinite(freeRpm)) { alert("Enter stall torque and free RPM first."); return; }
+    var snippet = JSON.stringify({ name: name, stall_torque_Nm: stallT, free_rpm: freeRpm }, null, 2);
+    navigator.clipboard.writeText(snippet + ",").then(function () {
+      alert("Copied to clipboard. Paste into motors/motors.json's array, then re-run build_motors.py.");
+    }, function () {
+      prompt("Copy failed automatically -- copy this manually:", snippet + ",");
+    });
+  };
+}
+
+// CSS for the generated visualizer page
+var VISUALIZER_CSS = ""
+  + "body{font-family:system-ui,sans-serif;margin:10px;color:#111;background:#fff}"
+  + "h1{font-size:19px;margin:0 0 4px}"
+  + ".note{color:#555;font-size:13px;max-width:900px;margin:0 0 10px}"
+  // toolbar
+  + ".toolbar{position:sticky;top:0;z-index:5;background:#fafafa;border:1px solid #ddd;"
+  + "border-radius:6px;padding:8px 12px;margin-bottom:10px;display:flex;flex-wrap:wrap;"
+  + "gap:10px 22px;align-items:center}"
+  + ".ctl{font-size:13px}"
+  + ".ctl input[type=range]{width:150px;vertical-align:middle}"
+  + ".val{font-variant-numeric:tabular-nums;color:#333;min-width:60px;display:inline-block}"
+  // each velocity slice is a 'pill' carrying its own identity color; the paired
+  // V slider and thrust(N) input share that color so the link is visual, not text.
+  + ".slicepill{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;"
+  + "border:2px solid;border-radius:16px;font-weight:600}"
+  + ".slicepill .tin{width:64px;font-size:12px;padding:2px 4px;border:1px solid;"
+  + "border-radius:4px;font-weight:400}"
+  + ".pill1{border-color:#1BA39C;color:#127a75}.pill1 .tin{border-color:#1BA39C;"
+  + "accent-color:#1BA39C}"
+  + ".pill2{border-color:#E07A20;color:#b35f12}.pill2 .tin{border-color:#E07A20;"
+  + "accent-color:#E07A20}"
+  + ".slicepill input[type=range]{accent-color:currentColor}"
+  // the vgrid: col 1 is the bubble column, cols 2.. are the cards; row 1 is the 2D
+  // band, row 2 the 3D band. Card sections drop into the matching band/column.
+  + ".vgrid{display:grid;gap:8px;align-items:stretch}"
+  + ".bubble{cursor:pointer;border:1px solid #888;border-radius:8px;background:#eef2f7;"
+  + "display:flex;align-items:center;justify-content:center;font-weight:600;font-size:13px}"
+  + ".bubble:hover{background:#e0e8f2}"
+  + ".bubble span{writing-mode:vertical-rl;transform:rotate(180deg);white-space:nowrap}"
+  + ".bubble2d{grid-column:1;grid-row:1}"
+  + ".bubble3d{grid-column:1;grid-row:2}"
+  + ".card2d,.card3d{border:1px solid #ccc;border-radius:6px;padding:6px}"
+  + ".card2d{grid-row:1}.card3d{grid-row:2}"
+  + ".propname{font-size:17px;font-weight:700;margin-top:6px}"
+  + ".info{font-size:12px;color:#444;margin-top:2px}"
+  + ".plot3d{width:100%;height:340px}"
+  + ".slicebox{width:100%;aspect-ratio:5/4;margin-top:4px}"
+  + ".slicebox>.plotly-graph-div,.plot3d>.plotly-graph-div{width:100%!important;height:100%!important}";
+
+// The whole visualizer runs inside the generated tab. It is stringified and
+// re-parsed there, so it may ONLY use: window.PROP_DATA, DEPLOY_NAMES, Plotly,
+// and the DOM -- NOT any closure vars from the picker.
+function VISUALIZER_JS() {
+  var Q3D = [
+    { label: "Thrust", key: "thrust", color: "#4C78A8" },
+    { label: "Power", key: "power", color: "#E45756" },
+    { label: "Efficiency", key: "eff", color: "#54A24B" },
+  ];
+  var byName = {};
+  window.PROP_DATA.forEach(function (p) { byName[p.summary.name] = p; });
+  var props = DEPLOY_NAMES.map(function (n) { return byName[n]; }).filter(Boolean);
+
+  // global max per quantity across all deployed props (both sources), so every
+  // card shares one scale per quantity. rpm/V too, for shared 3D axes.
+  var keys = ["rpm", "V_mph", "thrust", "power", "eff", "torque"];
+  var gmax = {};
+  keys.forEach(function (k) { gmax[k] = 0; });
+  function scan(sw) {
+    if (!sw) return;
+    keys.forEach(function (k) {
+      sw[k].forEach(function (v) { if (v != null && v > gmax[k]) gmax[k] = v; });
+    });
+  }
+  props.forEach(function (p) { scan(p.sim); scan(p.emp); });
+  keys.forEach(function (k) { if (gmax[k] <= 0) gmax[k] = 1; });
+
+  // The speed axis would otherwise stretch to where APC computes thrust going
+  // NEGATIVE (an unusably high speed for small/high-pitch props, ~250+ mph), which
+  // squashes the useful region. Cap the shared speed axis at the highest speed
+  // where thrust is still > 0, across all deployed props. No data is dropped --
+  // the negative-thrust tail just sits beyond the visible axis.
+  var vPos = 0;
+  function scanVpos(sw) {
+    if (!sw) return;
+    for (var i = 0; i < sw.V_mph.length; i++) {
+      if (sw.thrust[i] != null && sw.thrust[i] > 0 && sw.V_mph[i] > vPos) vPos = sw.V_mph[i];
+    }
+  }
+  props.forEach(function (p) { scanVpos(p.sim); scanVpos(p.emp); });
+  if (vPos > 0) gmax.V_mph = vPos;
+
+  // ---- 3D view of one quantity vs (RPM, speed): sim as a translucent mesh3d
+  // surface (original method), empirical as solid markers on top. No points dropped.
+  function fig3d(box, sw, empSw, q) {
+    var traces = [];
+    traces.push({
+      x: sw.rpm, y: sw.V_mph, z: sw[q.key], type: "mesh3d",
+      color: q.color, opacity: 0.45, delaunayaxis: "z", flatshading: true,
+      name: q.label, showlegend: false, hoverinfo: "skip",
+    });
+    // the real (non-interpolated) sim grid points, solid and tiny, on top of the
+    // translucent surface -- so the actual data points are visible, not just the fit
+    traces.push({
+      x: sw.rpm, y: sw.V_mph, z: sw[q.key], type: "scatter3d", mode: "markers",
+      marker: { size: 1.5, color: q.color },
+      name: q.label, showlegend: false, hoverinfo: "skip",
+    });
+    if (empSw) traces.push({
+      x: empSw.rpm, y: empSw.V_mph, z: empSw[q.key], type: "scatter3d", mode: "markers",
+      marker: { size: 3, color: q.color },
+      name: "emp", showlegend: false,
+    });
+    var zmax = (q.key === "eff") ? 1.0 : gmax[q.key];
+    var layout = {
+      title: { text: q.label, font: { size: 13 } },
+      scene: {
+        xaxis: { title: "RPM", range: [0, gmax.rpm] },
+        yaxis: { title: "mph", range: [0, gmax.V_mph] },
+        zaxis: { title: "", range: [0, zmax] },
+        aspectmode: "cube",
+      },
+      height: 340, margin: { l: 0, r: 0, t: 24, b: 0 }, showlegend: false,
+    };
+    Plotly.newPlot(box, traces, layout, { displayModeBar: false });
+  }
+
+  // ---- interpolate each RPM row to a target speed, never extrapolating ----
+  function sliceAt(sw, targetV, key) {
+    var rows = {};
+    for (var i = 0; i < sw.rpm.length; i++) (rows[sw.rpm[i]] = rows[sw.rpm[i]] || []).push(i);
+    var outX = [], outY = [];
+    Object.keys(rows).map(Number).sort(function (a, b) { return a - b; }).forEach(function (rpm) {
+      var idx = rows[rpm].slice().sort(function (a, b) { return sw.V_mph[a] - sw.V_mph[b]; });
+      var vs = idx.map(function (i) { return sw.V_mph[i]; });
+      if (targetV < vs[0] || targetV > vs[vs.length - 1]) return;
+      var j = 0; while (j < vs.length - 1 && vs[j + 1] < targetV) j++;
+      var a = idx[j], b = idx[Math.min(j + 1, idx.length - 1)];
+      var va = sw.V_mph[a], vb = sw.V_mph[b];
+      var t = (vb === va) ? 0 : (targetV - va) / (vb - va);
+      outX.push(rpm); outY.push(sw[key][a] + t * (sw[key][b] - sw[key][a]));
+    });
+    return { x: outX, y: outY };
+  }
+
+  // ---- 2D slice at one speed (mph): 3 quantities, twin y-axes (demo layout).
+  // speedMs is only for the title; rpmRange sets the shared x-axis. thrustN, if a
+  // finite number, draws a thin translucent blue horizontal reference line at that
+  // thrust (on the Thrust y-axis). ----
+  function figSlice(box, sw, empSw, speed, speedMs, rpmRange, thrustN) {
+    var axisOf = { thrust: "y", power: "y2", eff: "y3" };
+    var traces = [];
+    Q3D.forEach(function (q) {
+      var s = sliceAt(sw, speed, q.key);
+      traces.push({
+        x: s.x, y: s.y, yaxis: axisOf[q.key], mode: "markers+lines",
+        name: q.label, marker: { size: 4, color: q.color },
+        line: { color: q.color, width: 1 }, showlegend: false,
+      });
+      if (empSw) {
+        var e = sliceAt(empSw, speed, q.key);
+        traces.push({
+          x: e.x, y: e.y, yaxis: axisOf[q.key], mode: "markers",
+          marker: { size: 6, color: q.color, symbol: "circle-open" },
+          name: "emp " + q.label, showlegend: false,
+        });
+      }
+    });
+    var layout = {
+      title: { text: "slice @ " + speedMs.toFixed(0) + " m/s", font: { size: 12 } },
+      xaxis: { title: "RPM", range: rpmRange, domain: [0, 0.90], showgrid: false },
+      yaxis: { title: { text: "Thrust (N)", font: { color: "#4C78A8" } },
+               range: [0, gmax.thrust], tickfont: { color: "#4C78A8" }, showgrid: false },
+      yaxis2: { title: { text: "Power (W)", font: { color: "#E45756" } },
+                range: [0, gmax.power], tickfont: { color: "#E45756" },
+                overlaying: "y", side: "right", showgrid: false },
+      yaxis3: { range: [0, 1.05], overlaying: "y", side: "right",
+                showticklabels: false, showgrid: false, zeroline: false },
+      shapes: [{ type: "line", xref: "x domain", x0: 0, x1: 1, yref: "y3",
+                 y0: 1, y1: 1, line: { color: "#54A24B", width: 1, dash: "dot" } }],
+      margin: { l: 45, r: 14, t: 26, b: 34 }, autosize: true,
+    };
+    // optional thrust reference line: thin, translucent blue, on the Thrust axis
+    if (typeof thrustN === "number" && isFinite(thrustN) && thrustN > 0) {
+      layout.shapes.push({
+        type: "line", xref: "x domain", x0: 0, x1: 1, yref: "y",
+        y0: thrustN, y1: thrustN,
+        line: { color: "rgba(30,120,255,0.55)", width: 1.5 },
+      });
+    }
+    Plotly.newPlot(box, traces, layout, { displayModeBar: false, responsive: true });
+  }
+
+  // the slider is in m/s; the sweep data is in mph
+  var MPH_TO_MS = 0.44704;
+
+  // ---- build the grid: bubbles already in col 1; add each card's 2D + 3D parts.
+  // A card contributes a .card2d (row 1) and a .card3d (row 2) in its own column.
+  var gridEl = document.getElementById("grid");
+  gridEl.style.gridTemplateColumns = "48px repeat(" + props.length + ", 1fr)";
+  var sceneIds = [];                      // 3D plot ids, for camera sync
+  var cardsInfo = [];                     // {ci, sw, empSw} for rebuilds
+
+  props.forEach(function (p, ci) {
+    var sw = p.sim, empSw = p.emp;        // 3D/slices are driven by the sim grid;
+    if (!sw && empSw) sw = empSw;         // fall back to empirical if sim missing
+    var s = p.summary;
+    var col = ci + 2;                     // grid column (col 1 is the bubbles)
+    cardsInfo.push({ ci: ci, sw: sw, empSw: empSw });
+
+    // 2D section (row 1): the two slice plots
+    var c2 = document.createElement("div");
+    c2.className = "card2d";
+    c2.style.gridColumn = col; c2.style.gridRow = 1;
+    c2.innerHTML = [0, 1].map(function (si) {
+      return "<div class='slicebox' id='sl_" + ci + "_" + si + "'></div>";
+    }).join("");
+    gridEl.appendChild(c2);
+
+    // 3D section (row 2): the three 3D plots + name/info
+    var c3 = document.createElement("div");
+    c3.className = "card3d";
+    c3.style.gridColumn = col; c3.style.gridRow = 2;
+    var plot3d = Q3D.map(function (q, qi) {
+      var id = "g3d_" + ci + "_" + qi; sceneIds.push(id);
+      return "<div class='plot3d' id='" + id + "'></div>";
+    }).join("");
+    c3.innerHTML = plot3d
+      + "<div class='propname'>" + s.name + "</div>"
+      + "<div class='info'>" + s.diameter_in + "×" + s.pitch_in + " in, "
+      + s.blades + " blade" + (s.blades === 2 ? "" : "s")
+      + (s.type ? " · " + s.type : "")
+      + (empSw ? " · has empirical" : "") + "</div>";
+    gridEl.appendChild(c3);
+
+    // 3D plots are drawn once (their axes don't change with the sliders)
+    Q3D.forEach(function (q, qi) {
+      fig3d(document.getElementById("g3d_" + ci + "_" + qi), sw, empSw, q);
+    });
+  });
+
+  // ---- sliders (no auto-update: read only on 2D Rebuild) ----
+  var rpmMinEl = document.getElementById("rpmMin");
+  var rpmMaxEl = document.getElementById("rpmMax");
+  var v1El = document.getElementById("v1");
+  var v2El = document.getElementById("v2");
+  rpmMinEl.max = rpmMaxEl.max = Math.ceil(gmax.rpm / 1000) * 1000;
+  rpmMaxEl.value = rpmMinEl.max;
+  var maxMs = Math.ceil(gmax.V_mph * MPH_TO_MS / 5) * 5;
+  v1El.max = v2El.max = maxMs;
+
+  function rpmRange() {
+    var lo = +rpmMinEl.value, hi = +rpmMaxEl.value;
+    return (lo <= hi) ? [lo, hi] : [hi, lo];
+  }
+  function lblRpm() { var r = rpmRange(); document.getElementById("rpmLbl").textContent = r[0] + " - " + r[1]; }
+  function lblV1() { document.getElementById("v1Lbl").textContent = (+v1El.value) + " m/s"; }
+  function lblV2() { document.getElementById("v2Lbl").textContent = (+v2El.value) + " m/s"; }
+  rpmMinEl.oninput = rpmMaxEl.oninput = lblRpm;
+  v1El.oninput = lblV1; v2El.oninput = lblV2;
+  lblRpm(); lblV1(); lblV2();
+
+  var t1El = document.getElementById("t1");
+  var t2El = document.getElementById("t2");
+
+  // draw / redraw all 2D slices from the current sliders + thrust-line inputs
+  function build2D() {
+    var rr = rpmRange();
+    var speedsMs = [+v1El.value, +v2El.value];
+    var thrusts = [parseFloat(t1El.value), parseFloat(t2El.value)];   // NaN if blank
+    cardsInfo.forEach(function (c) {
+      speedsMs.forEach(function (vms, si) {
+        figSlice(document.getElementById("sl_" + c.ci + "_" + si),
+                 c.sw, c.empSw, vms / MPH_TO_MS, vms, rr, thrusts[si]);
+      });
+    });
+  }
+  build2D();                              // initial draw
+  document.getElementById("rebuild2d").addEventListener("click", build2D);
+  // Ctrl+B rebuilds the 2D slices (same as clicking 2D Rebuild)
+  document.addEventListener("keydown", function (e) {
+    if (e.ctrlKey && !e.altKey && !e.metaKey && (e.key === "b" || e.key === "B")) {
+      e.preventDefault();
+      build2D();
+    }
+  });
+
+  // ---- 3D camera sync: only the first 3D plot rotates; 3D Rebuild copies its angle ----
+  var others = sceneIds.slice(1);
+  others.forEach(function (id) { Plotly.relayout(id, { "scene.dragmode": false }); });
+  var lastCam = null;
+  var mEl = document.getElementById(sceneIds[0]);
+  if (mEl) mEl.on("plotly_relayout", function (ev) {
+    if (ev && ev["scene.camera"]) lastCam = ev["scene.camera"];
+  });
+  document.getElementById("rebuild3d").addEventListener("click", function () {
+    if (!lastCam) return;
+    others.forEach(function (id) { Plotly.relayout(id, { "scene.camera": lastCam }); });
+  });
+}
+
+// ---- go -----------------------------------------------------------------
+initToolbar();
+render();
+updateSelCount();
+</script>
+</body>
+</html>
