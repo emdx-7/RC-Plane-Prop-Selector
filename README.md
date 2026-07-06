@@ -8,4 +8,4 @@ Misc Notes:
 
 ## For Future
 data files are converted into a standard .json prop file in /proppeller folder
-Would be very cool to add more data bases later, so far claude has one shot the .json conversions and parsing so theres no grunt work needed to add data :)
+Would be very cool to add more data bases later -- so far claude has one shot the .json conversions and parsing so theres no grunt work needed to add data :)
