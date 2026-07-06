@@ -3,7 +3,7 @@ copy the /build_picker local path and open in a browser
 
 Misc Notes:
 * motor and detailed data vis are avaiable from that page
-* up to 4 props can be selected at once for the
+* up to 4 props can be selected at once for the detailed viewer (green deploy button)
 * use ctrl+b to rebuild slected prop plots
 
 ## For Future
